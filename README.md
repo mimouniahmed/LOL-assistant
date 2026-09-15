@@ -28,7 +28,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 1. Ingestion Riot API | ✅ Terminée |
 | 2. Collecte du dataset (SQLite + snowball sampling) | 🚧 Pipeline construit, industrialisé et testé à petite échelle ; reste la collecte à grande échelle |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
-| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Architecture décidée, extraction du dataset validée ; entraînement + SHAP restants |
+| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Dataset extrait sur la collecte complète (123 460 lignes) et exporté pour Power BI ; exploration visuelle, entraînement + SHAP restants |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
 
@@ -120,13 +120,15 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 
 1. Chargement des matchs bruts depuis SQLite + parsing JSON.
 2. Extraction composition/résultat/durée par match, filtrage des remakes (`game_duration < 300s`).
-3. **Filtrage des modes de jeu hors-sujet** (ex: Arena/`CHERRY`) — 4 des 20 matchs de test étaient dans ce cas (voir phase 2, correctif crawler).
+3. **Filtrage des modes de jeu hors-sujet** (ex: Arena/`CHERRY`) — présents dans les tout premiers matchs collectés (voir phase 2, correctif crawler).
 4. Classification empirique des champs `challenges` (équipe vs joueur), exclusion des champs Arena/ARAM (`SWARM_*`, `poroExplosions`...).
-5. Construction du dataset final : une ligne par (match, joueur), `champion` en vraie feature, faits individuels non sommés, faits d'équipe en contexte partagé. Résultat sur les données actuelles : **160 lignes** (16 matchs `CLASSIC` retenus × 10 joueurs), **132 colonnes**.
+5. Construction du dataset final : une ligne par (match, joueur), `champion` en vraie feature, faits individuels non sommés, faits d'équipe en contexte partagé.
+6. **Rejoué sur la collecte complète (2026-09-16)** après la collecte à grande échelle : **123 460 lignes** (12 346 matchs `CLASSIC` valides × 10 joueurs), **133 colonnes**, 173 champions distincts (minimum 93 occurrences chacun). La classification champ équipe/joueur s'est affinée avec plus de données (19 champs équipe contre 26 sur l'échantillon initial de 20 matchs, plus fiable).
+7. **Export CSV pour Power BI** (`data/dataset_for_powerbi.csv`, 57,7 Mo, non versionné) — étape d'exploration visuelle interactive prévue avant l'entraînement (Power BI Desktop ne tourne pas sur cette machine Linux ; le fichier est transféré vers une machine Windows). Export volontairement à plat (une ligne par match/joueur, pas pré-agrégé) : Power BI est fait pour construire les pivots/agrégations interactivement.
 
 ### Reste à faire
 
-Entraînement du modèle GBT (`champion` en feature catégorielle), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
+Exploration Power BI (taux de victoire par champion, corrélations faits de jeu ↔ victoire, valeurs manquantes), puis entraînement du modèle GBT (`champion` en feature catégorielle), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
 
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
@@ -191,5 +193,6 @@ LOL-assistant/
 │   └── 03_model_training.ipynb        # phase 3 — extraction du dataset validée, entraînement à venir
 └── data/
     ├── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
-    └── collection.log                 # logs de la collecte à grande échelle (jamais versionné)
+    ├── collection.log                 # logs de la collecte à grande échelle (jamais versionné)
+    └── dataset_for_powerbi.csv        # export plat du dataset (jamais versionné, pour exploration Power BI)
 ```
