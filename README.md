@@ -26,8 +26,8 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Fact
 | Phase | Statut |
 |---|---|
 | 1. Ingestion Riot API | ✅ Terminée |
-| 2. Collecte du dataset (SQLite + snowball sampling) | 🚧 Pipeline construit et testé à petite échelle ; reste la collecte à grande échelle |
-| Chantier — Industrialisation en package Python | 📋 Décidé, pas encore exécuté |
+| 2. Collecte du dataset (SQLite + snowball sampling) | 🚧 Pipeline construit, industrialisé et testé à petite échelle ; reste la collecte à grande échelle |
+| Chantier — Industrialisation en package Python | ✅ Terminée |
 | 3. Modèle ML (Factorization Machine) | 📋 Architecture décidée, implémentation à venir |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
@@ -60,28 +60,33 @@ Fichier : [`notebooks/02_dataset_collection.ipynb`](notebooks/02_dataset_collect
 
 **Fait et validé :**
 - Schéma SQLite + fonctions CRUD (`match_already_collected`, `save_match`, `player_already_explored`, `mark_player_explored`).
-- `RateLimiter` (fenêtre glissante) + `riot_get` combinant attente proactive et retry sur `429`.
-- Boucle de crawl `crawl_matches` (BFS/snowball sampling) — testée avec succès sur un petit lot (`target_count=20`).
+- `RateLimiter` (fenêtre glissante) + client Riot combinant attente proactive et retry sur `429`.
+- Boucle de crawl `crawl_matches` (BFS/snowball sampling) — testée avec succès sur un petit lot (`target_count=20`), y compris la reprise correcte entre deux sessions différentes (un joueur déjà exploré lors d'une exécution précédente est bien ignoré lors de la suivante, sans appel API gaspillé).
 - Visualisation du contenu de la base via `pd.read_sql_query` dans le notebook, et via l'extension VS Code *SQLite Viewer* installée pour parcourir `data/matches.db` visuellement.
+- Code entièrement industrialisé dans le package `lol_assistant/` (voir section dédiée ci-dessous) — le notebook n'importe plus que des fonctions/classes, il ne les définit plus.
 
 **Reste à faire :**
 - Lancer une vraie collecte à grande échelle (`target_count` de plusieurs milliers) — nécessaire pour que les embeddings de champions (phase 3) voient assez de paires différentes.
 - Prévoir le renouvellement de la clé API Riot si la collecte dépasse 24h (clé de dev expire quotidiennement) — envisager une clé personnelle.
 
-## Chantier transversal — Industrialisation en package Python 📋 Décidé, pas encore exécuté
+## Chantier transversal — Industrialisation en package Python ✅ Terminée
 
-Avant d'attaquer la phase 3, transformer le code réutilisable de la phase 2 (actuellement inline dans le notebook, avec des variables globales comme `conn`, `cursor`, `headers`) en un vrai package Python structuré par responsabilité, pour que les phases suivantes puissent l'importer plutôt que le dupliquer.
+Le code réutilisable de la phase 2 (auparavant inline dans le notebook, avec des variables globales comme `conn`, `cursor`, `headers`) est maintenant un vrai package Python structuré par responsabilité, importable depuis n'importe quel notebook ou script futur.
 
-**Structure cible :**
-- `lol_assistant/rate_limiter.py` — la classe `RateLimiter`.
-- `lol_assistant/riot_client.py` — une classe `RiotClient` encapsulant clé API, headers, région et rate limiter, avec des méthodes `get_puuid`, `get_match_ids`, `get_match_detail`.
-- `lol_assistant/database.py` — `get_connection(db_path)` + les fonctions CRUD, prenant la connexion en paramètre plutôt que de dépendre d'un état global.
-- `lol_assistant/crawler.py` — `crawl_matches(riot_client, conn, seed_puuid, target_count, ...)`.
-- `pyproject.toml` à la racine, pour `pip install -e .` (installation éditable, importable depuis les notebooks sans bidouille de `sys.path`).
+**Structure réalisée :**
+- `lol_assistant/rate_limiter.py` — la classe `RateLimiter` (fenêtre glissante), sans effet de bord (pas de `print`, contrairement à la version notebook — une bibliothèque interne ne décide pas de ce qui s'affiche).
+- `lol_assistant/riot_client.py` — classe `RiotClient` encapsulant clé API, headers, région et rate limiter, avec des méthodes `get_puuid`, `get_match_ids`, `get_match_detail`. Chaque méthode appelle `response.raise_for_status()` : elle lève une exception (`requests.HTTPError`) plutôt que de renvoyer un objet à vérifier manuellement.
+- `lol_assistant/database.py` — `get_connection(db_path)` (ouvre la connexion **et** garantit le schéma) + les fonctions CRUD, prenant désormais `conn` en paramètre explicite plutôt que de dépendre d'un `cursor` global partagé (qui aurait pu créer des interférences entre requêtes).
+- `lol_assistant/crawler.py` — `crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_player=10)`, orchestre les deux modules ci-dessus. Utilise `try`/`except requests.HTTPError` plutôt que de vérifier `status_code`, en cohérence avec `RiotClient`.
+- `pyproject.toml` à la racine — packaging minimal (`setuptools`), avec `[tool.setuptools.packages.find] include = ["lol_assistant*"]` explicite (sans ça, `setuptools` refuse de choisir entre `data/`, `notebooks/` et `lol_assistant/` comme package à inclure). Dépendances du package : `requests`, `python-dotenv` (le strict nécessaire au code lui-même — `pandas`/`jupyter` restent dans `requirements.txt`, ce sont des outils d'environnement, pas des dépendances du code).
 
-`notebooks/01_riot_api_basics.ipynb` reste inchangé (artefact pédagogique). `notebooks/02_dataset_collection.ipynb` sera mis à jour pour importer depuis `lol_assistant/` au lieu de tout définir inline (les explications pédagogiques en markdown restent).
+`notebooks/01_riot_api_basics.ipynb` reste inchangé (artefact pédagogique figé). `notebooks/02_dataset_collection.ipynb` a été mis à jour : les cellules de code sont devenues de simples imports depuis `lol_assistant/`, les explications pédagogiques en markdown sont conservées avec une note pointant vers l'implémentation réelle.
 
-`init.py` (vide, à la racine, jamais utilisé, antérieur au projet actuel) sera supprimé dans le cadre de ce chantier.
+`init.py` (vide, à la racine, jamais utilisé, antérieur au projet actuel) a été supprimé.
+
+**Environnement d'exécution découvert au passage** : les notebooks tournent via un environnement **conda nommé `lol-assistant`** (`~/anaconda3/envs/lol-assistant`), pas un `.venv` classique — c'est là qu'a été fait `pip install -e .`. Utile à savoir pour toute installation/dépannage futur sur cette machine.
+
+Validation effectuée : le package s'importe correctement, tests isolés (base de données, `RiotClient` avec un vrai appel API, `crawl_matches` de bout en bout), puis exécution complète du notebook 2 (`jupyter nbconvert --execute`) sans erreur.
 
 Plan détaillé de ce chantier (contexte de décision, alternatives écartées) : voir `~/.claude/plans/avant-de-poser-plein-vivid-rabin.md` (local à la machine où le projet a été démarré, pas versionné).
 
@@ -114,7 +119,7 @@ Assembler le tout dans une interface utilisable (CLI ou notebook consolidé) —
 
 ## Reprendre le projet sur une nouvelle machine
 
-Ce qui **suit le dépôt Git** (donc récupéré automatiquement via `git clone`) : le code, les notebooks, ce README, `.gitignore`, `requirements.txt`.
+Ce qui **suit le dépôt Git** (donc récupéré automatiquement via `git clone`) : le code, le package `lol_assistant/`, `pyproject.toml`, les notebooks, ce README, `.gitignore`, `requirements.txt`.
 
 Ce qui **ne suit pas le dépôt** (volontairement exclu par `.gitignore`) et doit être reconstitué à la main :
 1. **`.env`** — la clé API Riot. À recopier depuis la machine d'origine de façon sécurisée (jamais par email/chat en clair), ou à régénérer une nouvelle clé sur le [portail développeur Riot](https://developer.riotgames.com/).
@@ -122,12 +127,13 @@ Ce qui **ne suit pas le dépôt** (volontairement exclu par `.gitignore`) et doi
 3. **La clé SSH pour push/pull sur GitHub** — générer une nouvelle clé sur la nouvelle machine (`ssh-keygen`) et l'ajouter sur [github.com/settings/ssh/new](https://github.com/settings/ssh/new), comme fait pour cette machine.
 4. **L'historique de conversation et la mémoire du projet** (décisions prises, préférences pédagogiques) — stockés localement par Claude Code sur la machine d'origine, ne voyagent pas automatiquement. Ce README sert justement de filet de sécurité : une nouvelle session Claude Code qui le lit repart avec l'essentiel du contexte.
 
-Étapes concrètes sur la nouvelle machine :
+Étapes concrètes sur la nouvelle machine (avec `venv` — un environnement conda fonctionne aussi, voir note dans la section "Chantier transversal") :
 ```bash
 git clone git@github.com:mimouniahmed/LOL-assistant.git
 cd LOL-assistant
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .   # installe le package lol_assistant/ en mode éditable
 cp .env.example .env   # puis remplir avec la vraie clé API
 jupyter notebook
 ```
@@ -137,14 +143,20 @@ jupyter notebook
 ```
 LOL-assistant/
 ├── README.md                          # ce fichier
+├── pyproject.toml                     # packaging du package lol_assistant/ (pip install -e .)
 ├── requirements.txt                   # requests, python-dotenv, jupyter, pandas
 ├── .env                                # clé API Riot (jamais versionné)
 ├── .env.example                        # gabarit sans secret
-├── .gitignore                          # exclut .env, .venv/, __pycache__/, .ipynb_checkpoints/, data/
+├── .gitignore                          # exclut .env, .venv/, __pycache__/, .ipynb_checkpoints/, data/, .claude/, *.egg-info/
+├── lol_assistant/                     # package industrialisé (phase 2)
+│   ├── __init__.py
+│   ├── rate_limiter.py                # classe RateLimiter (fenêtre glissante)
+│   ├── riot_client.py                 # classe RiotClient (auth, région, appels Riot)
+│   ├── database.py                    # get_connection + fonctions CRUD SQLite
+│   └── crawler.py                     # crawl_matches (BFS/snowball sampling)
 ├── notebooks/
 │   ├── 01_riot_api_basics.ipynb       # phase 1 — terminée, figée (artefact pédagogique)
-│   └── 02_dataset_collection.ipynb    # phase 2 — pipeline prêt, collecte à grande échelle restante
-├── data/
-│   └── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
-└── init.py                             # vide, hérité du tout début du projet — sera supprimé lors du chantier d'industrialisation
+│   └── 02_dataset_collection.ipynb    # phase 2 — importe lol_assistant/, pipeline prêt
+└── data/
+    └── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
 ```
