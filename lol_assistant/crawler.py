@@ -4,6 +4,8 @@ import requests
 
 from . import database
 
+WANTED_GAME_MODE = "CLASSIC"  # exclut ARAM, Arena (CHERRY), URF... — seulement le 5v5 Summoner's Rift classique
+
 
 def crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_player=10):
     queue = deque([seed_puuid])
@@ -34,13 +36,17 @@ def crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_playe
                 print(f"Erreur pour le match {match_id} ({exc}), on passe.")
                 continue
 
-            database.save_match(conn, match_id, riot_client.region, match_data)
-            collected += 1
-
-            # snowball : les 10 participants de ce match deviennent de nouvelles graines
+            # snowball : les 10 participants de ce match deviennent de nouvelles graines,
+            # qu'on garde ce match ou non (ce sont de vrais joueurs, quel que soit le mode)
             for participant_puuid in match_data["metadata"]["participants"]:
                 if not database.player_already_explored(conn, participant_puuid):
                     queue.append(participant_puuid)
+
+            if match_data["info"].get("gameMode") != WANTED_GAME_MODE:
+                continue  # hors-sujet (ARAM, Arena...) : pas de raison de le stocker
+
+            database.save_match(conn, match_id, riot_client.region, match_data)
+            collected += 1
 
             if collected % 10 == 0:
                 print(f"{collected}/{target_count} matchs collectés...")

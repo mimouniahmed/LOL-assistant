@@ -48,3 +48,9 @@ class RiotClient:
         response = self._get(url)
         response.raise_for_status()
         return response.json()
+
+    def get_match_timeline(self, match_id):
+        url = f"https://{self.region}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline"
+        response = self._get(url)
+        response.raise_for_status()
+        return response.json()

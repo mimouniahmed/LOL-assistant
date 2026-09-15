@@ -18,7 +18,7 @@ Projet éducatif : construire, étape par étape, un assistant qui aide un joueu
 ## Architecture globale du pipeline
 
 ```
-Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Factorization Machine (ML) → LLM (Claude API) → interface
+Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Gradient Boosted Trees + SHAP (ML) → LLM (Claude API) → interface
 ```
 
 ## Statut global (2026-09-15)
@@ -28,7 +28,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Fact
 | 1. Ingestion Riot API | ✅ Terminée |
 | 2. Collecte du dataset (SQLite + snowball sampling) | 🚧 Pipeline construit, industrialisé et testé à petite échelle ; reste la collecte à grande échelle |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
-| 3. Modèle ML (Factorization Machine) | 📋 Architecture décidée, implémentation à venir |
+| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Architecture décidée, extraction du dataset validée ; entraînement + SHAP restants |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
 
@@ -64,6 +64,7 @@ Fichier : [`notebooks/02_dataset_collection.ipynb`](notebooks/02_dataset_collect
 - Boucle de crawl `crawl_matches` (BFS/snowball sampling) — testée avec succès sur un petit lot (`target_count=20`), y compris la reprise correcte entre deux sessions différentes (un joueur déjà exploré lors d'une exécution précédente est bien ignoré lors de la suivante, sans appel API gaspillé).
 - Visualisation du contenu de la base via `pd.read_sql_query` dans le notebook, et via l'extension VS Code *SQLite Viewer* installée pour parcourir `data/matches.db` visuellement.
 - Code entièrement industrialisé dans le package `lol_assistant/` (voir section dédiée ci-dessous) — le notebook n'importe plus que des fonctions/classes, il ne les définit plus.
+- **Correctif qualité de données (2026-09-15)** : le crawl snowball n'appliquait aucun filtre de mode de jeu — 4 des 20 premiers matchs collectés se sont révélés être en mode Arena (`gameMode="CHERRY"`, 2v2v2v2, sans rapport avec le 5v5 classique). `crawl_matches` ne sauvegarde désormais que les matchs `gameMode == "CLASSIC"` (il continue à explorer les participants de ces matchs pour le snowball sampling, juste sans les stocker).
 
 **Reste à faire :**
 - Lancer une vraie collecte à grande échelle (`target_count` de plusieurs milliers) — nécessaire pour que les embeddings de champions (phase 3) voient assez de paires différentes.
@@ -90,18 +91,43 @@ Validation effectuée : le package s'importe correctement, tests isolés (base d
 
 Plan détaillé de ce chantier (contexte de décision, alternatives écartées) : voir `~/.claude/plans/avant-de-poser-plein-vivid-rabin.md` (local à la machine où le projet a été démarré, pas versionné).
 
-## Phase 3 — Modèle ML (à venir)
+## Phase 3 — Modèle ML : Gradient Boosted Trees + SHAP 🚧 En cours
 
-**Décision d'architecture prise à l'avance :** une **Factorization Machine (FM)** sur des embeddings de champions, pas des features artisanales (tags Tank/Mage/...) ni des embeddings non-supervisés (style word2vec).
+Fichier : [`notebooks/03_model_training.ipynb`](notebooks/03_model_training.ipynb)
 
-Pourquoi ce choix précis :
-- Les embeddings sont appris **directement en optimisant la prédiction victoire/défaite** (supervisé) — contrairement à des embeddings de co-occurrence qui capteraient la popularité du méta plutôt que ce qui fait réellement gagner.
-- Le score se décompose en une somme interprétable : `biais global + poids individuel par champion + produit scalaire entre paires d'embeddings`.
-  - Paires **dans la même équipe** → terme de **synergie**.
-  - Paires **d'équipes opposées** → terme de **matchup/contre**.
-- Cette décomposition additive permet une **attribution exacte et gratuite** : pour une composition donnée, on peut calculer la contribution de chaque champion à la victoire/défaite prédite, sans outil d'explicabilité externe (type SHAP). C'était l'objectif explicite exprimé : identifier les champions synergiques et les champions décisifs pour une composition donnée.
+### La vision (redéfinie en cours de route)
 
-À faire : extraction du dataset tabulaire depuis SQLite (pandas, `json.loads` sur `raw_json`), encodage des champions en identifiants catégoriels, implémentation de la FM, entraînement, évaluation (en gardant en tête qu'un modèle basé uniquement sur le draft a un plafond de précision modeste — le skill et le déroulé de partie dominent le résultat réel).
+L'architecture initialement prévue était une Factorization Machine (FM) sur des embeddings de champions (voir *Décision abandonnée* plus bas). En la concevant plus en détail, l'utilisateur a reformulé l'objectif en 3 étapes plus riches, à partir du **déroulé de la partie** plutôt que des picks seuls :
+1. Identifier, via le ML, les **faits de jeu** (objectifs, kills, économie, vision...) statistiquement liés à la victoire.
+2. Pour **chaque champion**, déterminer lesquels de ces faits comptent le plus **spécifiquement pour lui**.
+3. Pour une **composition donnée**, agréger ça en un plan de jeu : quels faits prioriser, lesquels ne changeront pas grand-chose.
+
+### Architecture retenue
+
+**Gradient Boosted Trees (XGBoost/LightGBM) + SHAP**, sur un dataset **au niveau joueur** (une ligne par participant par match, pas par match) :
+- SHAP donne l'importance globale des features → étape 1.
+- Les valeurs d'interaction SHAP entre `champion` et chaque fait de jeu → étape 2.
+- Les contributions SHAP pour une ligne donnée (somme exacte = la prédiction) → étape 3, sans outil d'explicabilité externe supplémentaire.
+
+**Pourquoi pas la Timeline API** : Match-V5 (déjà collecté, aucun nouvel appel nécessaire) contient déjà un champ `challenges` par participant — ~125 statistiques dérivées par Riot (`dragonTakedowns`, `teamBaronKills`, `killParticipation`, `teamDamagePercentage`, `laningPhaseGoldExpAdvantage`, `visionScorePerMinute`...). Ça couvre l'essentiel de ce qu'on serait allé chercher dans la Timeline, sans doubler le budget de rate limiting. La Timeline (`RiotClient.get_match_timeline`, déjà ajouté mais non utilisé) reste une option pour affiner plus tard avec du timing précis.
+
+**Erreur corrigée en cours de route** : une première version sommait les champs individuels (`soloKills`...) en totaux d'équipe avant l'entraînement — ce qui détruit le lien champion↔fait de jeu nécessaire à l'étape 2. Corrigé : le dataset reste à la granularité (match, joueur), jamais agrégé à (match, équipe). Certains champs `challenges` sont en réalité des faits d'équipe dupliqués à l'identique chez les 5 coéquipiers (ex: `teamBaronKills`) plutôt que des faits individuels (ex: `soloKills`) — Riot ne documente pas laquelle des deux catégories s'applique à chaque champ, donc c'est détecté empiriquement sur les données (un champ est "équipe" seulement s'il n'a **jamais** varié entre les 5 joueurs d'une même équipe sur tout le dataset).
+
+### Fait et validé (extraction du dataset)
+
+1. Chargement des matchs bruts depuis SQLite + parsing JSON.
+2. Extraction composition/résultat/durée par match, filtrage des remakes (`game_duration < 300s`).
+3. **Filtrage des modes de jeu hors-sujet** (ex: Arena/`CHERRY`) — 4 des 20 matchs de test étaient dans ce cas (voir phase 2, correctif crawler).
+4. Classification empirique des champs `challenges` (équipe vs joueur), exclusion des champs Arena/ARAM (`SWARM_*`, `poroExplosions`...).
+5. Construction du dataset final : une ligne par (match, joueur), `champion` en vraie feature, faits individuels non sommés, faits d'équipe en contexte partagé. Résultat sur les données actuelles : **160 lignes** (16 matchs `CLASSIC` retenus × 10 joueurs), **132 colonnes**.
+
+### Reste à faire
+
+Entraînement du modèle GBT (`champion` en feature catégorielle), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
+
+### Décision abandonnée : Factorization Machine sur embeddings de champions
+
+Idée initiale : `biais global + poids individuel par champion + produit scalaire entre paires d'embeddings` (paires même équipe = synergie, équipes opposées = matchup/contre), embeddings appris de façon supervisée. Abandonnée après avoir identifié un vrai problème mathématique en l'implémentant : un produit scalaire est symétrique (`dot(A,B) = dot(B,A)`), mais quel camp est "bleu" ou "rouge" est arbitraire — un terme de contre symétrique ne peut donc porter **aucun signal prédictif** (il ne change pas de signe quand on inverse les équipes, contrairement au label). Le corriger proprement (embeddings offense/défense séparés, ou matrice bilinéaire antisymétrique apprise) ajoutait une complexité prématurée vu le dataset actuel (~20 matchs, qui overfitterait de toute façon). Combiné à l'envie de raisonner sur le déroulé de partie plutôt que sur les picks seuls, ça a motivé le pivot vers GBT+SHAP.
 
 ## Phase 4 — LLM (à venir)
 
@@ -144,7 +170,7 @@ jupyter notebook
 LOL-assistant/
 ├── README.md                          # ce fichier
 ├── pyproject.toml                     # packaging du package lol_assistant/ (pip install -e .)
-├── requirements.txt                   # requests, python-dotenv, jupyter, pandas
+├── requirements.txt                   # requests, python-dotenv, jupyter, pandas, torch, scikit-learn
 ├── .env                                # clé API Riot (jamais versionné)
 ├── .env.example                        # gabarit sans secret
 ├── .gitignore                          # exclut .env, .venv/, __pycache__/, .ipynb_checkpoints/, data/, .claude/, *.egg-info/
@@ -153,10 +179,11 @@ LOL-assistant/
 │   ├── rate_limiter.py                # classe RateLimiter (fenêtre glissante)
 │   ├── riot_client.py                 # classe RiotClient (auth, région, appels Riot)
 │   ├── database.py                    # get_connection + fonctions CRUD SQLite
-│   └── crawler.py                     # crawl_matches (BFS/snowball sampling)
+│   └── crawler.py                     # crawl_matches (BFS/snowball sampling, filtre gameMode)
 ├── notebooks/
 │   ├── 01_riot_api_basics.ipynb       # phase 1 — terminée, figée (artefact pédagogique)
-│   └── 02_dataset_collection.ipynb    # phase 2 — importe lol_assistant/, pipeline prêt
+│   ├── 02_dataset_collection.ipynb    # phase 2 — importe lol_assistant/, pipeline prêt
+│   └── 03_model_training.ipynb        # phase 3 — extraction du dataset validée, entraînement à venir
 └── data/
     └── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
 ```
