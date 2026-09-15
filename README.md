@@ -65,10 +65,13 @@ Fichier : [`notebooks/02_dataset_collection.ipynb`](notebooks/02_dataset_collect
 - Visualisation du contenu de la base via `pd.read_sql_query` dans le notebook, et via l'extension VS Code *SQLite Viewer* installée pour parcourir `data/matches.db` visuellement.
 - Code entièrement industrialisé dans le package `lol_assistant/` (voir section dédiée ci-dessous) — le notebook n'importe plus que des fonctions/classes, il ne les définit plus.
 - **Correctif qualité de données (2026-09-15)** : le crawl snowball n'appliquait aucun filtre de mode de jeu — 4 des 20 premiers matchs collectés se sont révélés être en mode Arena (`gameMode="CHERRY"`, 2v2v2v2, sans rapport avec le 5v5 classique). `crawl_matches` ne sauvegarde désormais que les matchs `gameMode == "CLASSIC"` (il continue à explorer les participants de ces matchs pour le snowball sampling, juste sans les stocker).
+- **`crawl_matches` évolué pour la collecte à grande échelle** : accepte maintenant une **liste** de graines (`seed_puuids`, pas juste une seule — nécessaire pour relancer efficacement, la file d'attente n'étant pas persistée entre deux exécutions) et une limite de **durée** (`max_duration_seconds`), en plus du `target_count` — utile pour viser "quelques heures de collecte" plutôt qu'un nombre de matchs qu'on ne sait pas estimer précisément à l'avance.
+- **`scripts/collect_dataset.py`** : script (pas un notebook — tâche d'infra longue durée, pas un concept à apprendre) qui trouve tous les `puuid` déjà croisés dans les matchs collectés mais jamais explorés (via `metadata.participants` du JSON brut), et relance `crawl_matches` à partir de ces graines. Usage : `python scripts/collect_dataset.py [heures] [db_path]`. Lancé en arrière-plan avec `python -u` (sortie non bufferisée — sans `-u`, les `print()` restent en tampon et n'apparaissent pas en temps réel dans un fichier de log).
+- **Collecte à grande échelle lancée le 2026-09-15**, 3h, logs dans `data/collection.log` (non versionné).
 
 **Reste à faire :**
-- Lancer une vraie collecte à grande échelle (`target_count` de plusieurs milliers) — nécessaire pour que les embeddings de champions (phase 3) voient assez de paires différentes.
-- Prévoir le renouvellement de la clé API Riot si la collecte dépasse 24h (clé de dev expire quotidiennement) — envisager une clé personnelle.
+- Vérifier le résultat de la collecte à grande échelle une fois terminée, et relancer si besoin pour viser plus de matchs.
+- Prévoir le renouvellement de la clé API Riot si une future collecte dépasse 24h (clé de dev expire quotidiennement) — envisager une clé personnelle.
 
 ## Chantier transversal — Industrialisation en package Python ✅ Terminée
 
@@ -78,7 +81,7 @@ Le code réutilisable de la phase 2 (auparavant inline dans le notebook, avec de
 - `lol_assistant/rate_limiter.py` — la classe `RateLimiter` (fenêtre glissante), sans effet de bord (pas de `print`, contrairement à la version notebook — une bibliothèque interne ne décide pas de ce qui s'affiche).
 - `lol_assistant/riot_client.py` — classe `RiotClient` encapsulant clé API, headers, région et rate limiter, avec des méthodes `get_puuid`, `get_match_ids`, `get_match_detail`. Chaque méthode appelle `response.raise_for_status()` : elle lève une exception (`requests.HTTPError`) plutôt que de renvoyer un objet à vérifier manuellement.
 - `lol_assistant/database.py` — `get_connection(db_path)` (ouvre la connexion **et** garantit le schéma) + les fonctions CRUD, prenant désormais `conn` en paramètre explicite plutôt que de dépendre d'un `cursor` global partagé (qui aurait pu créer des interférences entre requêtes).
-- `lol_assistant/crawler.py` — `crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_player=10)`, orchestre les deux modules ci-dessus. Utilise `try`/`except requests.HTTPError` plutôt que de vérifier `status_code`, en cohérence avec `RiotClient`.
+- `lol_assistant/crawler.py` — `crawl_matches(riot_client, conn, seed_puuids, target_count, matches_per_player=10, max_duration_seconds=None)`, orchestre les deux modules ci-dessus. Utilise `try`/`except requests.HTTPError` plutôt que de vérifier `status_code`, en cohérence avec `RiotClient`. `seed_puuids` accepte une liste ou une simple chaîne ; `max_duration_seconds` permet de borner par le temps plutôt que par un nombre de matchs (ajouté pour la collecte à grande échelle, voir phase 2).
 - `pyproject.toml` à la racine — packaging minimal (`setuptools`), avec `[tool.setuptools.packages.find] include = ["lol_assistant*"]` explicite (sans ça, `setuptools` refuse de choisir entre `data/`, `notebooks/` et `lol_assistant/` comme package à inclure). Dépendances du package : `requests`, `python-dotenv` (le strict nécessaire au code lui-même — `pandas`/`jupyter` restent dans `requirements.txt`, ce sont des outils d'environnement, pas des dépendances du code).
 
 `notebooks/01_riot_api_basics.ipynb` reste inchangé (artefact pédagogique figé). `notebooks/02_dataset_collection.ipynb` a été mis à jour : les cellules de code sont devenues de simples imports depuis `lol_assistant/`, les explications pédagogiques en markdown sont conservées avec une note pointant vers l'implémentation réelle.
@@ -170,7 +173,7 @@ jupyter notebook
 LOL-assistant/
 ├── README.md                          # ce fichier
 ├── pyproject.toml                     # packaging du package lol_assistant/ (pip install -e .)
-├── requirements.txt                   # requests, python-dotenv, jupyter, pandas, torch, scikit-learn
+├── requirements.txt                   # requests, python-dotenv, jupyter, pandas, scikit-learn, xgboost, shap
 ├── .env                                # clé API Riot (jamais versionné)
 ├── .env.example                        # gabarit sans secret
 ├── .gitignore                          # exclut .env, .venv/, __pycache__/, .ipynb_checkpoints/, data/, .claude/, *.egg-info/
@@ -179,11 +182,14 @@ LOL-assistant/
 │   ├── rate_limiter.py                # classe RateLimiter (fenêtre glissante)
 │   ├── riot_client.py                 # classe RiotClient (auth, région, appels Riot)
 │   ├── database.py                    # get_connection + fonctions CRUD SQLite
-│   └── crawler.py                     # crawl_matches (BFS/snowball sampling, filtre gameMode)
+│   └── crawler.py                     # crawl_matches (BFS/snowball sampling, filtre gameMode, durée max)
+├── scripts/
+│   └── collect_dataset.py             # collecte à grande échelle, en arrière-plan, bornée en durée
 ├── notebooks/
 │   ├── 01_riot_api_basics.ipynb       # phase 1 — terminée, figée (artefact pédagogique)
 │   ├── 02_dataset_collection.ipynb    # phase 2 — importe lol_assistant/, pipeline prêt
 │   └── 03_model_training.ipynb        # phase 3 — extraction du dataset validée, entraînement à venir
 └── data/
-    └── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
+    ├── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
+    └── collection.log                 # logs de la collecte à grande échelle (jamais versionné)
 ```

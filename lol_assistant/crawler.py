@@ -1,3 +1,4 @@
+import time
 from collections import deque
 
 import requests
@@ -7,11 +8,18 @@ from . import database
 WANTED_GAME_MODE = "CLASSIC"  # exclut ARAM, Arena (CHERRY), URF... — seulement le 5v5 Summoner's Rift classique
 
 
-def crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_player=10):
-    queue = deque([seed_puuid])
+def crawl_matches(riot_client, conn, seed_puuids, target_count, matches_per_player=10, max_duration_seconds=None):
+    if isinstance(seed_puuids, str):
+        seed_puuids = [seed_puuids]
+
+    start_time = time.time()
+    queue = deque(seed_puuids)
     collected = 0
 
-    while queue and collected < target_count:
+    def time_is_up():
+        return max_duration_seconds is not None and (time.time() - start_time) >= max_duration_seconds
+
+    while queue and collected < target_count and not time_is_up():
         puuid = queue.popleft()
 
         if database.player_already_explored(conn, puuid):
@@ -25,7 +33,7 @@ def crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_playe
             continue
 
         for match_id in match_ids:
-            if collected >= target_count:
+            if collected >= target_count or time_is_up():
                 break
             if database.match_already_collected(conn, match_id):
                 continue
@@ -51,4 +59,11 @@ def crawl_matches(riot_client, conn, seed_puuid, target_count, matches_per_playe
             if collected % 10 == 0:
                 print(f"{collected}/{target_count} matchs collectés...")
 
-    print(f"Terminé : {collected} matchs collectés, {len(queue)} joueurs encore en attente dans la file.")
+    if time_is_up():
+        reason = "temps écoulé"
+    elif collected >= target_count:
+        reason = "objectif atteint"
+    else:
+        reason = "file d'attente épuisée"
+
+    print(f"Terminé ({reason}) : {collected} matchs collectés, {len(queue)} joueurs encore en attente dans la file.")
