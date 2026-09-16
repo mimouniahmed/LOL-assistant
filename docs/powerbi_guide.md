@@ -2,10 +2,11 @@
 
 Deux objectifs en un : apprendre les bases de Power BI en le pratiquant, et repérer visuellement quels faits de jeu comptent le plus pour la victoire, avant de se lancer dans le modèle Gradient Boosted Trees + SHAP.
 
-Cinq fichiers à importer (générés par `notebooks/03_model_training.ipynb`, à transférer depuis la machine Linux vers Windows — non versionnés dans Git) :
-- **`dataset_for_powerbi.csv`** — la table plate, une ligne par (match, joueur), 123 460 lignes × 134 colonnes. Contient maintenant `role` (`TOP`/`JUNGLE`/`MIDDLE`/`BOTTOM`/`UTILITY`).
-- **`feature_relevance.csv`** — classement de ~128 faits de jeu par corrélation avec la victoire (calculé en Python, Concept 7 du notebook), fuites de données déjà exclues (voir plus bas).
-- **`feature_relevance_by_role.csv`** — la même corrélation, mais calculée **séparément pour chaque rôle** (format long : une ligne par rôle × fait, Concept 9).
+Six fichiers à importer (générés par `notebooks/03_model_training.ipynb`, à transférer depuis la machine Linux vers Windows — non versionnés dans Git) :
+- **`dataset_for_powerbi.csv`** — la table plate, une ligne par (match, joueur), 123 460 lignes × 134 colonnes. Contient `role` (`TOP`/`JUNGLE`/`MIDDLE`/`BOTTOM`/`UTILITY`).
+- **`feature_relevance.csv`** — classement de ~128 faits de jeu par corrélation avec la victoire (Concept 7), fuites de données déjà exclues.
+- **`feature_relevance_early_game.csv`** — le même classement, mais restreint aux **29 faits précoces/causaux** (Concept 11) — celui qui compte vraiment pour la suite, voir section 2bis.
+- **`feature_relevance_by_role.csv`** — la corrélation globale (Concept 7), calculée **séparément pour chaque rôle** (format long : une ligne par rôle × fait, Concept 9).
 - **`missing_values.csv`** — pourcentage de valeurs manquantes par colonne (Concept 8).
 - **`champion_summary.csv`** — par champion : parties jouées, taux de victoire, rôle principal (Concept 10).
 
@@ -32,6 +33,16 @@ En tête sur les données actuelles : `turretTakedowns`, `turretPlatesTaken`, `k
 Ce champ n'apparaît **volontairement pas** dans `feature_relevance.csv`, alors qu'il était la 3ᵉ corrélation la plus forte dans une première passe. En creusant (voir Concept 6bis du notebook), il s'est avéré valoir **toujours exactement 0** chez les équipes perdantes, jamais chez les gagnantes — un signe de fuite de donnée : un champ qui encode quasiment le résultat lui-même plutôt qu'un fait observable en cours de partie. Un tel champ ferait paraître un modèle ML artificiellement excellent, sans être exploitable pour un vrai plan de jeu (on ne peut pas "faire du `maxKillDeficit`" pendant une partie).
 
 Si tu veux le vérifier toi-même dans Power BI : importe temporairement `dataset_for_powerbi`, graphique à colonnes groupées avec `team_win` en axe et `Moyenne de maxKillDeficit` en valeur — la barre côté défaite sera à zéro. Bon réflexe à garder pour la suite : toujours se demander si un fait très corrélé est **causal/observable pendant la partie**, ou juste une reformulation du résultat.
+
+## 2bis. Causes vs conséquences : se restreindre à l'early game
+
+`turretTakedowns`, `teamBaronKills`, `kda`... sont en tête du classement global, mais ce sont des **cumuls sur toute la partie**. Une équipe qui écrase déjà l'autre accumule ce genre de stats tout au long du match simplement parce qu'elle gagne déjà — ce n'est pas ce qui l'a fait gagner, c'est la **conséquence** d'être déjà en train de gagner. Un fait précoce (avant ~20 min), lui, reflète plus une vraie décision stratégique : le snowball n'a pas encore eu le temps de tout expliquer.
+
+`feature_relevance_early_game.csv` ne garde que les faits bornés dans le temps (Héraut, Voidgrubs, plusieurs champs "Before10Minutes"/"Laning"/"Early"...) ou des horodatages. Résultat frappant : le classement change complètement de forme. `maxLevelLeadLaneOpponent` (corrélation 0.37) prend la tête — nettement plus faible que le 0.60 de `turretTakedowns`, ce qui est normal et honnête : on a retiré le bruit de "être déjà en train de gagner", il reste un signal plus modeste mais plus actionnable.
+
+**Un détour instructif, à refaire toi-même si tu veux pratiquer une recherche web** : `turretPlatesTaken` semblait être un candidat évident pour cette catégorie (les plaques de tourelle "disparaissent à 14 minutes", une règle du jeu connue) — mais une recherche a révélé que le **patch 26.01** (sorti en janvier 2026, donc actif pendant toute notre collecte) a supprimé cette expiration. Vérifié aussi dans les données : `turretPlatesTaken` atteint 41 chez nous, un score impossible sous l'ancien plafond de 14 minutes. Bonne leçon : les mécaniques d'un jeu vivant changent, une hypothèse doit se vérifier, pas se supposer — surtout dans un projet dont les données sont plus récentes que tes propres connaissances.
+
+Visuel suggéré : reprends le graphique en barres de la section 1, mais sur `feature_relevance_early_game` — la hiérarchie est vraiment différente, ça vaut le coup de comparer les deux côte à côte (deux visuels sur la même page).
 
 ## 3. Taux de victoire par champion (apprendre : mesures DAX)
 
@@ -76,3 +87,5 @@ Deux visuels **Carte** : un avec `COUNTROWS(dataset_for_powerbi)` (nombre total 
 ## Limite importante à garder en tête
 
 Cette exploration (corrélations Python + visuels Power BI) ne capture que des relations **simples** : "ce fait bouge-t-il globalement (ou par rôle) avec la victoire". Elle ne peut pas détecter qu'un fait compte **beaucoup pour un champion précis et pas du tout pour un autre au sein du même rôle** (une interaction fine) — c'est exactement ce que les valeurs d'interaction SHAP, calculées après l'entraînement du modèle Gradient Boosted Trees, apporteront en plus. Cette étape Power BI sert à se familiariser avec les données, repérer les pistes évidentes et les problèmes de qualité (fuites, valeurs manquantes) avant d'attaquer le modèle — pas à le remplacer.
+
+Même la restriction "early game" (section 2bis) reste de la **corrélation**, pas une preuve de causalité au sens strict — elle réduit la contamination par le résultat final, elle ne l'élimine pas complètement (une équipe légèrement meilleure peut aussi gagner sa lane tôt *et* le reste du match, sans lien de cause à effet direct entre les deux). À garder en tête en lisant les chiffres.
