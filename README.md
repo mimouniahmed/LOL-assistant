@@ -21,14 +21,14 @@ Projet éducatif : construire, étape par étape, un assistant qui aide un joueu
 Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Gradient Boosted Trees + SHAP (ML) → LLM (Claude API) → interface
 ```
 
-## Statut global (2026-09-15)
+## Statut global (2026-09-16)
 
 | Phase | Statut |
 |---|---|
 | 1. Ingestion Riot API | ✅ Terminée |
-| 2. Collecte du dataset (SQLite + snowball sampling) | 🚧 Pipeline construit, industrialisé et testé à petite échelle ; reste la collecte à grande échelle |
+| 2. Collecte du dataset (SQLite + snowball sampling) | ✅ Terminée — 12 482 matchs collectés |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
-| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Dataset extrait sur la collecte complète, export + guide Power BI prêts ; exploration visuelle, entraînement + SHAP restants |
+| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Premier modèle entraîné et validé ; importance SHAP globale faite, interactions champion×fait et attribution par composition restantes |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
 
@@ -49,7 +49,7 @@ Résultat concret validé : récupération du `puuid` de l'utilisateur, de ses m
 
 Ce notebook est un **artefact pédagogique figé** : il ne sera pas refactoré vers le futur package Python (contrairement à la phase 2, voir plus bas), car son but est de documenter l'apprentissage pas-à-pas des concepts API, pas de fournir du code réutilisable.
 
-## Phase 2 — Collecte du dataset 🚧 Pipeline prêt, collecte à grande échelle restante
+## Phase 2 — Collecte du dataset ✅ Terminée
 
 Fichier : [`notebooks/02_dataset_collection.ipynb`](notebooks/02_dataset_collection.ipynb)
 
@@ -67,11 +67,9 @@ Fichier : [`notebooks/02_dataset_collection.ipynb`](notebooks/02_dataset_collect
 - **Correctif qualité de données (2026-09-15)** : le crawl snowball n'appliquait aucun filtre de mode de jeu — 4 des 20 premiers matchs collectés se sont révélés être en mode Arena (`gameMode="CHERRY"`, 2v2v2v2, sans rapport avec le 5v5 classique). `crawl_matches` ne sauvegarde désormais que les matchs `gameMode == "CLASSIC"` (il continue à explorer les participants de ces matchs pour le snowball sampling, juste sans les stocker).
 - **`crawl_matches` évolué pour la collecte à grande échelle** : accepte maintenant une **liste** de graines (`seed_puuids`, pas juste une seule — nécessaire pour relancer efficacement, la file d'attente n'étant pas persistée entre deux exécutions) et une limite de **durée** (`max_duration_seconds`), en plus du `target_count` — utile pour viser "quelques heures de collecte" plutôt qu'un nombre de matchs qu'on ne sait pas estimer précisément à l'avance.
 - **`scripts/collect_dataset.py`** : script (pas un notebook — tâche d'infra longue durée, pas un concept à apprendre) qui trouve tous les `puuid` déjà croisés dans les matchs collectés mais jamais explorés (via `metadata.participants` du JSON brut), et relance `crawl_matches` à partir de ces graines. Usage : `python scripts/collect_dataset.py [heures] [db_path]`. Lancé en arrière-plan avec `python -u` (sortie non bufferisée — sans `-u`, les `print()` restent en tampon et n'apparaissent pas en temps réel dans un fichier de log).
-- **Collecte à grande échelle lancée le 2026-09-15**, 8h (jusqu'à minuit), logs dans `data/collection.log` (non versionné).
+- **Collecte à grande échelle lancée le 2026-09-15**, arrêtée le 2026-09-16 après ~7h effectives (le script tourne en tâche de fond, ajustable/arrêtable à la demande) : **12 482 matchs** en base, **3 106 joueurs explorés**. Objectif largement atteint, phase 2 considérée terminée.
 
-**Reste à faire :**
-- Vérifier le résultat de la collecte à grande échelle une fois terminée, et relancer si besoin pour viser plus de matchs.
-- Prévoir le renouvellement de la clé API Riot si une future collecte dépasse 24h (clé de dev expire quotidiennement) — envisager une clé personnelle.
+Point d'attention pour une collecte future plus longue : la clé de dev Riot expire toutes les 24h — envisager une clé personnelle si besoin.
 
 ## Chantier transversal — Industrialisation en package Python ✅ Terminée
 
@@ -132,9 +130,17 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 12. **Vérification web en cours de route** : `turretPlatesTaken` avait été classé "borné dans le temps" (plaques supposées disparaître à 14 min) — recherche web à l'appui, le **patch 26.01** (7-8 janvier 2026, actif pendant toute la collecte) a supprimé cette expiration. Confirmé aussi empiriquement (`turretPlatesTaken` atteint 41 dans nos données, impossible sous l'ancien plafond). Reclassé en cumul sur toute la partie, exclu du sous-ensemble early-game. Bonne illustration qu'un jeu vivant change et qu'une hypothèse doit se vérifier, pas se supposer — encore plus dans un projet où les données sont postérieures à la date de connaissance du modèle.
 13. **Guide Power BI pas-à-pas** : [`docs/powerbi_guide.md`](docs/powerbi_guide.md) — import des 6 fichiers, types de colonnes, l'histoire des fuites (`maxKillDeficit`, `turretPlatesTaken`), mesures DAX de base, graphiques (barres, matrice rôle×fait, slicers, cartes), avec le rappel que cette exploration ne remplace pas SHAP.
 
+### Entraînement du modèle (2026-09-16)
+
+14. **Préparation** : features = `EARLY_GAME_FIELDS` (moins les fuites) + `champion` + `role`, en catégorielles natives (`category` dtype + `enable_categorical=True` côté XGBoost — pas de one-hot, qui exploserait en 173 colonnes pour les champions).
+15. **Split train/test par `match_id`** (`GroupShuffleSplit`), pas par ligne — un split ligne par ligne aurait fui de l'information entre les 10 lignes d'un même match. 9 876 matchs en train, 2 470 en test, aucun chevauchement.
+16. **Premier entraînement** (29 features) : Accuracy 0.815, ROC-AUC 0.887 — plus élevé qu'attendu. SHAP a montré `earliestBaron` dominant très largement (près de 2x le suivant), signe d'alerte.
+17. **Correction** : le Baron apparaît à 20:00 précises dans le patch actuel (vérifié sur le web, source 2026) — `earliestBaron` ne peut donc **jamais** représenter un fait "avant 20 min", erreur de classification plutôt qu'insight. Retiré avec `earliestElderDragon` (encore plus tardif). `EARLY_GAME_FIELDS` passe à 27 champs.
+18. **Second entraînement** (27 features) : Accuracy 0.779, ROC-AUC 0.860 — score plus bas mais plausible (les indicateurs de lane inclus sont légitimement très prédictifs en solo queue). Importance SHAP bien répartie cette fois (`firstTurretKilledTime` en tête à 0.63, `voidMonsterKill` juste derrière à 0.58 — rapport ~1.08, contre ~1.7 avant correction) : signal distribué sur des faits légitimes, pas une fuite résiduelle qui dominerait tout. Version retenue.
+
 ### Reste à faire
 
-Exploration Power BI par l'utilisateur (suivre le guide), puis entraînement du modèle GBT sur `EARLY_GAME_FIELDS` uniquement (`champion` en feature catégorielle, `LEAKAGE_SUSPECT_FIELDS` et faits non-causaux exclus), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
+Analyse SHAP approfondie : interactions `champion` × fait de jeu (étape 2 de la vision initiale — quels faits comptent plus pour quel champion), attribution exacte par ligne/composition (étape 3), sauvegarde du modèle pour la phase 4 (LLM).
 
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
