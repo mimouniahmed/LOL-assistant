@@ -123,14 +123,16 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 3. **Filtrage des modes de jeu hors-sujet** (ex: Arena/`CHERRY`) — présents dans les tout premiers matchs collectés (voir phase 2, correctif crawler).
 4. Classification empirique des champs `challenges` (équipe vs joueur), exclusion des champs Arena/ARAM (`SWARM_*`, `poroExplosions`...).
 5. Construction du dataset final : une ligne par (match, joueur), `champion` en vraie feature, faits individuels non sommés, faits d'équipe en contexte partagé.
-6. **Rejoué sur la collecte complète (2026-09-16)** après la collecte à grande échelle : **123 460 lignes** (12 346 matchs `CLASSIC` valides × 10 joueurs), **133 colonnes**, 173 champions distincts (minimum 93 occurrences chacun). La classification champ équipe/joueur s'est affinée avec plus de données (19 champs équipe contre 26 sur l'échantillon initial de 20 matchs, plus fiable).
-7. **Export CSV pour Power BI** (`data/dataset_for_powerbi.csv`, 57,7 Mo, non versionné) — étape d'exploration visuelle interactive prévue avant l'entraînement (Power BI Desktop ne tourne pas sur cette machine Linux ; le fichier est transféré vers une machine Windows). Export volontairement à plat (une ligne par match/joueur, pas pré-agrégé) : Power BI est fait pour construire les pivots/agrégations interactivement.
-8. **Classement de pertinence par corrélation** (`data/feature_relevance.csv`, non versionné) : corrélation de chacune des 129 colonnes numériques avec `team_win`, plus la moyenne de chaque colonne chez les gagnants vs les perdants — un premier tri rapide (pas équivalent à SHAP, ne capture pas les interactions champion×fait) pour guider l'exploration Power BI plutôt que de construire 129 mesures à la main. En tête sur les données actuelles : `turretTakedowns` (corr. 0.60), `turretPlatesTaken` (0.50), `maxKillDeficit` (0.49).
-9. **Guide Power BI pas-à-pas** : [`docs/powerbi_guide.md`](docs/powerbi_guide.md) — import, types de colonnes, mesures DAX de base, graphiques (barres, slicers, cartes), avec le rappel que cette exploration ne remplace pas SHAP.
+6. **Rejoué sur la collecte complète (2026-09-16)** après la collecte à grande échelle : **123 460 lignes** (12 346 matchs `CLASSIC` valides × 10 joueurs), **134 colonnes**, 173 champions distincts (minimum 93 occurrences chacun). La classification champ équipe/joueur s'est affinée avec plus de données (19 champs équipe contre 26 sur l'échantillon initial de 20 matchs, plus fiable).
+7. **Ajout du `role`** (`teamPosition` Riot : `TOP`/`JUNGLE`/`MIDDLE`/`BOTTOM`/`UTILITY`), oublié dans une première version — indispensable pour distinguer "ce fait compte peu pour ce champion" de "ce fait compte peu pour son rôle en général".
+8. **Détection de fuite de donnée** : `maxKillDeficit` (3ᵉ plus forte corrélation dans une première passe) s'est avéré valoir **toujours exactement 0** côté perdant, jamais côté gagnant — un signe de fuite (le champ encode quasiment le résultat) plutôt qu'un vrai fait observable en cours de partie. Détecté systématiquement (tout champ quasi-nul chez les perdants mais présent chez les gagnants) plutôt qu'au cas par cas ; exclu du classement de pertinence et de l'entraînement à venir.
+9. **Export CSV pour Power BI** (`data/dataset_for_powerbi.csv`, non versionné) — étape d'exploration visuelle interactive prévue avant l'entraînement (Power BI Desktop ne tourne pas sur cette machine Linux ; le fichier est transféré vers une machine Windows). Export volontairement à plat (une ligne par match/joueur, pas pré-agrégé) : Power BI est fait pour construire les pivots/agrégations interactivement.
+10. **Classement de pertinence par corrélation** (`data/feature_relevance.csv`), **le même par rôle** (`data/feature_relevance_by_role.csv`, format long rôle×fait), un **état des lieux des valeurs manquantes** (`data/missing_values.csv`, 26 colonnes concernées, 17 à plus de 50%), et une **table de synthèse par champion** (`data/champion_summary.csv` : parties jouées, taux de victoire, rôle principal) — tous non versionnés. En tête du classement global : `turretTakedowns` (corr. 0.60), `turretPlatesTaken` (0.50), `kda` (0.47).
+11. **Guide Power BI pas-à-pas** : [`docs/powerbi_guide.md`](docs/powerbi_guide.md) — import des 5 fichiers, types de colonnes, l'histoire de la fuite `maxKillDeficit`, mesures DAX de base, graphiques (barres, matrice rôle×fait, slicers, cartes), avec le rappel que cette exploration ne remplace pas SHAP.
 
 ### Reste à faire
 
-Exploration Power BI par l'utilisateur (suivre le guide), puis entraînement du modèle GBT (`champion` en feature catégorielle), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
+Exploration Power BI par l'utilisateur (suivre le guide), puis entraînement du modèle GBT (`champion` en feature catégorielle, `LEAKAGE_SUSPECT_FIELDS` exclus), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
 
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
@@ -199,5 +201,8 @@ LOL-assistant/
     ├── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
     ├── collection.log                 # logs de la collecte à grande échelle (jamais versionné)
     ├── dataset_for_powerbi.csv        # export plat du dataset (jamais versionné, pour exploration Power BI)
-    └── feature_relevance.csv          # classement de pertinence par corrélation (jamais versionné)
+    ├── feature_relevance.csv          # classement de pertinence par corrélation (jamais versionné)
+    ├── feature_relevance_by_role.csv  # idem, segmenté par rôle (jamais versionné)
+    ├── missing_values.csv             # % de valeurs manquantes par colonne (jamais versionné)
+    └── champion_summary.csv           # parties/winrate/rôle principal par champion (jamais versionné)
 ```
