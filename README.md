@@ -28,7 +28,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 1. Ingestion Riot API | ✅ Terminée |
 | 2. Collecte du dataset (SQLite + snowball sampling) | ✅ Terminée — 12 482 matchs collectés |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
-| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Premier modèle entraîné et validé ; importance SHAP globale faite, interactions champion×fait et attribution par composition restantes |
+| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Modèle entraîné et sauvegardé, SHAP étapes 1 et 2 faites ; reste l'attribution par composition (étape 3) |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
 
@@ -137,10 +137,13 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 16. **Premier entraînement** (29 features) : Accuracy 0.815, ROC-AUC 0.887 — plus élevé qu'attendu. SHAP a montré `earliestBaron` dominant très largement (près de 2x le suivant), signe d'alerte.
 17. **Correction** : le Baron apparaît à 20:00 précises dans le patch actuel (vérifié sur le web, source 2026) — `earliestBaron` ne peut donc **jamais** représenter un fait "avant 20 min", erreur de classification plutôt qu'insight. Retiré avec `earliestElderDragon` (encore plus tardif). `EARLY_GAME_FIELDS` passe à 27 champs.
 18. **Second entraînement** (27 features) : Accuracy 0.779, ROC-AUC 0.860 — score plus bas mais plausible (les indicateurs de lane inclus sont légitimement très prédictifs en solo queue). Importance SHAP bien répartie cette fois (`firstTurretKilledTime` en tête à 0.63, `voidMonsterKill` juste derrière à 0.58 — rapport ~1.08, contre ~1.7 avant correction) : signal distribué sur des faits légitimes, pas une fuite résiduelle qui dominerait tout. Version retenue.
+19. **SHAP — étape 1 (importance globale)** ✅ faite au point 18 ci-dessus.
+20. **SHAP — étape 2 (interactions champion × fait)** ✅ : `shap_interaction_values` sur tout le jeu de test (24 700 lignes, 18s de calcul), agrégées par (champion, fait) → `data/champion_feature_interactions.csv` (4844 lignes). Résultat marquant, non suggéré au modèle : les supports (Lulu, Nautilus) ont `visionScoreAdvantageLaneOpponent` en tête de leurs interactions — la vision compte différemment pour eux, cohérent avec leur rôle. Répond directement à l'étape 2 de la vision initiale.
+21. **Modèle sauvegardé** : `data/xgb_model.joblib` (modèle + liste de features + catégories `champion`/`role` connues à l'entraînement) — pour que la phase 4 (LLM) puisse le réutiliser sans ré-entraîner.
 
 ### Reste à faire
 
-Analyse SHAP approfondie : interactions `champion` × fait de jeu (étape 2 de la vision initiale — quels faits comptent plus pour quel champion), attribution exacte par ligne/composition (étape 3), sauvegarde du modèle pour la phase 4 (LLM).
+**Étape 3 de la vision initiale** : attribution exacte par ligne/composition — pour une composition donnée (pas un match déjà joué), utiliser les contributions SHAP pour dire quels faits de jeu prioriser et lesquels ne changeront pas grand-chose. C'est le pont direct vers la phase 4 (le LLM racontera cette attribution en langage naturel).
 
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
@@ -213,5 +216,7 @@ LOL-assistant/
     ├── feature_relevance_early_game.csv  # idem, restreint aux 29 faits précoces/causaux (jamais versionné)
     ├── feature_relevance_by_role.csv  # idem, segmenté par rôle (jamais versionné)
     ├── missing_values.csv             # % de valeurs manquantes par colonne (jamais versionné)
-    └── champion_summary.csv           # parties/winrate/rôle principal par champion (jamais versionné)
+    ├── champion_summary.csv           # parties/winrate/rôle principal par champion (jamais versionné)
+    ├── champion_feature_interactions.csv  # interactions SHAP champion × fait (jamais versionné)
+    └── xgb_model.joblib               # modèle XGBoost entraîné + métadonnées (jamais versionné)
 ```
