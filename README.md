@@ -28,7 +28,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 1. Ingestion Riot API | ✅ Terminée |
 | 2. Collecte du dataset (SQLite + snowball sampling) | 🚧 Pipeline construit, industrialisé et testé à petite échelle ; reste la collecte à grande échelle |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
-| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Dataset extrait sur la collecte complète (123 460 lignes) et exporté pour Power BI ; exploration visuelle, entraînement + SHAP restants |
+| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Dataset extrait sur la collecte complète, export + guide Power BI prêts ; exploration visuelle, entraînement + SHAP restants |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
 
@@ -125,10 +125,12 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 5. Construction du dataset final : une ligne par (match, joueur), `champion` en vraie feature, faits individuels non sommés, faits d'équipe en contexte partagé.
 6. **Rejoué sur la collecte complète (2026-09-16)** après la collecte à grande échelle : **123 460 lignes** (12 346 matchs `CLASSIC` valides × 10 joueurs), **133 colonnes**, 173 champions distincts (minimum 93 occurrences chacun). La classification champ équipe/joueur s'est affinée avec plus de données (19 champs équipe contre 26 sur l'échantillon initial de 20 matchs, plus fiable).
 7. **Export CSV pour Power BI** (`data/dataset_for_powerbi.csv`, 57,7 Mo, non versionné) — étape d'exploration visuelle interactive prévue avant l'entraînement (Power BI Desktop ne tourne pas sur cette machine Linux ; le fichier est transféré vers une machine Windows). Export volontairement à plat (une ligne par match/joueur, pas pré-agrégé) : Power BI est fait pour construire les pivots/agrégations interactivement.
+8. **Classement de pertinence par corrélation** (`data/feature_relevance.csv`, non versionné) : corrélation de chacune des 129 colonnes numériques avec `team_win`, plus la moyenne de chaque colonne chez les gagnants vs les perdants — un premier tri rapide (pas équivalent à SHAP, ne capture pas les interactions champion×fait) pour guider l'exploration Power BI plutôt que de construire 129 mesures à la main. En tête sur les données actuelles : `turretTakedowns` (corr. 0.60), `turretPlatesTaken` (0.50), `maxKillDeficit` (0.49).
+9. **Guide Power BI pas-à-pas** : [`docs/powerbi_guide.md`](docs/powerbi_guide.md) — import, types de colonnes, mesures DAX de base, graphiques (barres, slicers, cartes), avec le rappel que cette exploration ne remplace pas SHAP.
 
 ### Reste à faire
 
-Exploration Power BI (taux de victoire par champion, corrélations faits de jeu ↔ victoire, valeurs manquantes), puis entraînement du modèle GBT (`champion` en feature catégorielle), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
+Exploration Power BI par l'utilisateur (suivre le guide), puis entraînement du modèle GBT (`champion` en feature catégorielle), analyse SHAP (importance globale, interactions champion×fait, attribution par ligne), évaluation (plafond de précision modeste attendu — le skill et le déroulé de partie dominent le résultat réel, on ne vise pas une prédiction fiable coup par coup).
 
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
@@ -190,9 +192,12 @@ LOL-assistant/
 ├── notebooks/
 │   ├── 01_riot_api_basics.ipynb       # phase 1 — terminée, figée (artefact pédagogique)
 │   ├── 02_dataset_collection.ipynb    # phase 2 — importe lol_assistant/, pipeline prêt
-│   └── 03_model_training.ipynb        # phase 3 — extraction du dataset validée, entraînement à venir
+│   └── 03_model_training.ipynb        # phase 3 — extraction + exports Power BI faits, entraînement à venir
+├── docs/
+│   └── powerbi_guide.md               # guide pas-à-pas d'exploration Power BI
 └── data/
     ├── matches.db                     # base SQLite (jamais versionnée, générée par la collecte)
     ├── collection.log                 # logs de la collecte à grande échelle (jamais versionné)
-    └── dataset_for_powerbi.csv        # export plat du dataset (jamais versionné, pour exploration Power BI)
+    ├── dataset_for_powerbi.csv        # export plat du dataset (jamais versionné, pour exploration Power BI)
+    └── feature_relevance.csv          # classement de pertinence par corrélation (jamais versionné)
 ```
