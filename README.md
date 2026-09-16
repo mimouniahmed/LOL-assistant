@@ -28,7 +28,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 1. Ingestion Riot API | ✅ Terminée |
 | 2. Collecte du dataset (SQLite + snowball sampling) | ✅ Terminée — 12 482 matchs collectés |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
-| 3. Modèle ML (Gradient Boosted Trees + SHAP) | 🚧 Modèle entraîné et sauvegardé, SHAP étapes 1 et 2 faites ; reste l'attribution par composition (étape 3) |
+| 3. Modèle ML (Gradient Boosted Trees + SHAP) | ✅ Terminée — modèle entraîné, SHAP étapes 1-2-3 faites |
 | 4. LLM (plan de jeu textuel) | ⏳ À venir |
 | 5. Interface | ⏳ À venir |
 
@@ -92,7 +92,7 @@ Validation effectuée : le package s'importe correctement, tests isolés (base d
 
 Plan détaillé de ce chantier (contexte de décision, alternatives écartées) : voir `~/.claude/plans/avant-de-poser-plein-vivid-rabin.md` (local à la machine où le projet a été démarré, pas versionné).
 
-## Phase 3 — Modèle ML : Gradient Boosted Trees + SHAP 🚧 En cours
+## Phase 3 — Modèle ML : Gradient Boosted Trees + SHAP ✅ Terminée
 
 Fichier : [`notebooks/03_model_training.ipynb`](notebooks/03_model_training.ipynb)
 
@@ -141,9 +141,12 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 20. **SHAP — étape 2 (interactions champion × fait)** ✅ : `shap_interaction_values` sur tout le jeu de test (24 700 lignes, 18s de calcul), agrégées par (champion, fait) → `data/champion_feature_interactions.csv` (4844 lignes). Résultat marquant, non suggéré au modèle : les supports (Lulu, Nautilus) ont `visionScoreAdvantageLaneOpponent` en tête de leurs interactions — la vision compte différemment pour eux, cohérent avec leur rôle. Répond directement à l'étape 2 de la vision initiale.
 21. **Modèle sauvegardé** : `data/xgb_model.joblib` (modèle + liste de features + catégories `champion`/`role` connues à l'entraînement) — pour que la phase 4 (LLM) puisse le réutiliser sans ré-entraîner.
 
-### Reste à faire
+22. **Étape 3 — attribution par composition** : problème conceptuel à résoudre d'abord — le modèle prédit à partir de faits *observés* en partie réelle, impossibles à connaître pour une composition hypothétique. Solution : `composition_fact_ranking(champions)` combine l'importance globale (étape 1) + la somme des interactions champion×fait (étape 2) pour les 5 champions donnés, sans nouveau calcul SHAP. Exemple sur une composition construite automatiquement (champion le plus joué de chaque rôle : Jayce/Sylas/Yone/Yunara/Lulu) : `maxLevelLeadLaneOpponent`, `voidMonsterKill`, `firstTurretKilledTime` en tête à prioriser ; `quickFirstTurret`, `dancedWithRiftHerald` à interaction quasi nulle pour cette équipe précise.
+23. **Artefacts prêts pour la phase 4** : `data/xgb_model.joblib`, `data/global_shap_importance.csv`, `data/champion_feature_interactions.csv`, `data/champion_summary.csv` — le LLM pourra appeler l'équivalent de `composition_fact_ranking` et transformer le classement en texte, sans ré-entraîner ni refaire tourner SHAP.
 
-**Étape 3 de la vision initiale** : attribution exacte par ligne/composition — pour une composition donnée (pas un match déjà joué), utiliser les contributions SHAP pour dire quels faits de jeu prioriser et lesquels ne changeront pas grand-chose. C'est le pont direct vers la phase 4 (le LLM racontera cette attribution en langage naturel).
+### Reste à faire (phase 3)
+
+Rien — phase 3 terminée. La suite est la phase 4 (intégration du LLM).
 
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
@@ -218,5 +221,6 @@ LOL-assistant/
     ├── missing_values.csv             # % de valeurs manquantes par colonne (jamais versionné)
     ├── champion_summary.csv           # parties/winrate/rôle principal par champion (jamais versionné)
     ├── champion_feature_interactions.csv  # interactions SHAP champion × fait (jamais versionné)
-    └── xgb_model.joblib               # modèle XGBoost entraîné + métadonnées (jamais versionné)
+    ├── xgb_model.joblib               # modèle XGBoost entraîné + métadonnées (jamais versionné)
+    └── global_shap_importance.csv     # importance SHAP globale par fait (jamais versionné)
 ```
