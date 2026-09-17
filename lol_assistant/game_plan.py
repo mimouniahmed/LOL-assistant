@@ -1,3 +1,4 @@
+import difflib
 import os
 from pathlib import Path
 
@@ -27,10 +28,28 @@ def load_ranking_artifacts(data_dir=DATA_DIR):
     return global_importance, interactions
 
 
+def _validate_team(champions, known_champions):
+    if len(champions) != 5:
+        raise ValueError(f"Une équipe doit avoir exactement 5 champions, reçu {len(champions)} : {champions}")
+
+    unknown = [c for c in champions if c not in known_champions]
+    if unknown:
+        details = []
+        for c in unknown:
+            close = difflib.get_close_matches(c, known_champions, n=1)
+            details.append(f"'{c}'" + (f" (vouliez-vous dire '{close[0]}' ?)" if close else " (inconnu)"))
+        raise ValueError("Champion(s) non reconnu(s) : " + ", ".join(details))
+
+
 def composition_fact_ranking(champions, global_importance, interactions):
     """champions : liste de 5 noms de champions (une équipe). Renvoie un classement des faits
     de jeu par importance estimée pour cette équipe précise (global + le champion le plus
-    concerné, pas une somme — voir notebooks/03_model_training.ipynb, Concept 19)."""
+    concerné, pas une somme — voir notebooks/03_model_training.ipynb, Concept 19).
+
+    Lève une ValueError si la liste n'a pas exactement 5 noms, ou si un nom de champion
+    n'est pas reconnu (avec une suggestion si un nom proche existe)."""
+    _validate_team(champions, set(interactions["champion"].unique()))
+
     features = [f for f in global_importance.index if f not in NON_FACT_COLUMNS]
 
     rows = []
