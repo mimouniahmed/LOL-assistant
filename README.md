@@ -29,7 +29,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 2. Collecte du dataset (SQLite + snowball sampling) | ✅ Terminée — 12 482 matchs collectés |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
 | 3. Modèle ML (Gradient Boosted Trees + SHAP) | ✅ Terminée — modèle entraîné, SHAP étapes 1-2-3 faites |
-| 4. LLM (plan de jeu textuel) | ⏳ À venir |
+| 4. LLM (plan de jeu textuel) | 🚧 Code prêt (Claude), reste la clé API à renseigner + tester, puis option Ollama |
 | 5. Interface | ⏳ À venir |
 
 ## Phase 1 — Bases de l'API Riot ✅ Terminée
@@ -162,9 +162,21 @@ Pas engagé maintenant : nettement plus de travail que `challenges` (raison init
 
 Idée initiale : `biais global + poids individuel par champion + produit scalaire entre paires d'embeddings` (paires même équipe = synergie, équipes opposées = matchup/contre), embeddings appris de façon supervisée. Abandonnée après avoir identifié un vrai problème mathématique en l'implémentant : un produit scalaire est symétrique (`dot(A,B) = dot(B,A)`), mais quel camp est "bleu" ou "rouge" est arbitraire — un terme de contre symétrique ne peut donc porter **aucun signal prédictif** (il ne change pas de signe quand on inverse les équipes, contrairement au label). Le corriger proprement (embeddings offense/défense séparés, ou matrice bilinéaire antisymétrique apprise) ajoutait une complexité prématurée vu le dataset actuel (~20 matchs, qui overfitterait de toute façon). Combiné à l'envie de raisonner sur le déroulé de partie plutôt que sur les picks seuls, ça a motivé le pivot vers GBT+SHAP.
 
-## Phase 4 — LLM (à venir)
+## Phase 4 — LLM 🚧 En cours
 
-Utiliser l'API Claude pour transformer la sortie du modèle ML (probabilité de victoire + attribution par champion : qui est le point fort, qui est le point faible) en un **plan de jeu textuel** exploitable par un joueur. Sujets à couvrir : prompt engineering, structured outputs.
+Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`notebooks/04_llm_game_plan.ipynb`](notebooks/04_llm_game_plan.ipynb).
+
+**Décision** : Claude en premier (API Anthropic), puis Llama 3.1 8B via Ollama en option de comparaison gratuite/locale (vérifié : cette machine a la RAM pour le 8B quantifié, pas pour le 70B/405B — CPU only, pas de GPU, donc plus lent qu'une API cloud).
+
+**Fait :**
+- `composition_fact_ranking` **industrialisée** dans `lol_assistant/game_plan.py` (jusque-là seulement dans le notebook 3) — lit `data/global_shap_importance.csv` + `data/champion_feature_interactions.csv`, aucun appel modèle/SHAP nécessaire à l'usage. Au passage, filtre `champion`/`role` (présents par erreur dans les CSV exportés, pas de vrais faits de jeu — oubli du notebook 3, corrigé ici à l'usage plutôt qu'en ré-import du notebook).
+- `build_game_plan_prompt` : construit le prompt à partir des classements des **deux** équipes — la nôtre ("à prioriser") et l'adverse ("à surveiller/contrer", même analyse légitime appliquée à leurs champions, pas un vrai signal de matchup entraîné).
+- `generate_game_plan` : pipeline complet (classement + prompt + appel Claude). Modèle par défaut **Sonnet 5** (tâche de rédaction gabarisée, pas besoin du modèle le plus capable — `claude-opus-5` disponible en passant `model=...`).
+- Dépendance `anthropic` ajoutée (`requirements.txt` et `pyproject.toml`, le package en a besoin directement).
+
+**Reste à faire :**
+- Renseigner `ANTHROPIC_API_KEY` dans `.env` et valider un premier plan de jeu généré.
+- Ajouter Ollama/Llama 3.1 8B en option de comparaison.
 
 ## Phase 5 — Interface (à venir)
 

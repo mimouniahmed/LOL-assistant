@@ -9,6 +9,8 @@ requires-python = ">=3.9"
 dependencies = [
     "requests",
     "python-dotenv",
+    "pandas",
+    "anthropic",
 ]
 
 [tool.setuptools.packages.find]
