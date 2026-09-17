@@ -150,6 +150,14 @@ L'architecture initialement prévue était une Factorization Machine (FM) sur de
 
 Rien — phase 3 terminée. La suite est la phase 4 (intégration du LLM).
 
+### Piste future documentée : "Phase 3 v2" avec la Timeline (pas commencée)
+
+Limite résiduelle acceptée (pas grave, mais réelle) : `maxLevelLeadLaneOpponent`/`maxCsAdvantageOnLaneOpponent` restent un peu "conséquence" (être en avance sur son adversaire de lane reflète déjà en partie que la lane se passe bien) — aucun seuil "avant 20 min" appliqué à `challenges` (agrégats sur des fenêtres floues côté Riot) ne peut totalement l'éliminer.
+
+Solution documentée pour plus tard, si besoin : reconstruire `EARLY_GAME_FIELDS` depuis **Match-Timeline-V5** plutôt que `challenges`, pour avoir de vrais instantanés à un timestamp précis (ex: écart d'or à exactement 15:00) plutôt que des agrégats Riot flous. `RiotClient.get_match_timeline(match_id)` existe déjà (ajouté tôt dans la réflexion phase 3, jamais branché depuis qu'on a découvert que `challenges` suffisait). Plan : nouvelle table `timelines` (même schéma que `matches`) + une boucle d'enrichissement sur les 12 346 `match_id` déjà connus (pas une nouvelle collecte, ~4h à ~50 req/min) ; choisir des points de mesure fixes (10/15/20 min) ; recalculer or/XP/CS et écarts vs adversaire de lane (matching par rôle à coder nous-mêmes) depuis `participantFrames`, et des compteurs d'objectifs strictement filtrés par timestamp depuis `events` (ça redonnerait un équivalent fiable de `turretTakedownsBefore20Min`, que `turretPlatesTaken` ne peut plus offrir depuis le patch 26.01) ; puis ré-entraîner et comparer au modèle actuel (gardé comme référence, pas jeté).
+
+Pas engagé maintenant : nettement plus de travail que `challenges` (raison initiale de l'avoir évité), payloads de timeline plus volumineux à stocker, logique de matching par lane à écrire de zéro — et pas nécessaire pour débloquer la phase 4 (le modèle actuel fonctionne et est bien calibré).
+
 ### Décision abandonnée : Factorization Machine sur embeddings de champions
 
 Idée initiale : `biais global + poids individuel par champion + produit scalaire entre paires d'embeddings` (paires même équipe = synergie, équipes opposées = matchup/contre), embeddings appris de façon supervisée. Abandonnée après avoir identifié un vrai problème mathématique en l'implémentant : un produit scalaire est symétrique (`dot(A,B) = dot(B,A)`), mais quel camp est "bleu" ou "rouge" est arbitraire — un terme de contre symétrique ne peut donc porter **aucun signal prédictif** (il ne change pas de signe quand on inverse les équipes, contrairement au label). Le corriger proprement (embeddings offense/défense séparés, ou matrice bilinéaire antisymétrique apprise) ajoutait une complexité prématurée vu le dataset actuel (~20 matchs, qui overfitterait de toute façon). Combiné à l'envie de raisonner sur le déroulé de partie plutôt que sur les picks seuls, ça a motivé le pivot vers GBT+SHAP.
