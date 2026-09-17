@@ -164,7 +164,7 @@ Idée initiale : `biais global + poids individuel par champion + produit scalair
 
 ## Phase 4 — LLM 🚧 En cours
 
-Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`notebooks/04_llm_game_plan.ipynb`](notebooks/04_llm_game_plan.ipynb).
+Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`lol_assistant/live_game.py`](lol_assistant/live_game.py), [`notebooks/04_llm_game_plan.ipynb`](notebooks/04_llm_game_plan.ipynb).
 
 **Décision** : Claude en premier (API Anthropic), puis Llama 3.1 8B via Ollama en option de comparaison gratuite/locale (vérifié : cette machine a la RAM pour le 8B quantifié, pas pour le 70B/405B — CPU only, pas de GPU, donc plus lent qu'une API cloud).
 
@@ -175,6 +175,7 @@ Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`noteboo
 - Dépendance `anthropic` ajoutée (`requirements.txt` et `pyproject.toml`, le package en a besoin directement).
 - **Premier plan de jeu généré avec succès (2026-09-18)**, `ANTHROPIC_API_KEY` renseignée et testée. Résultat cohérent et actionnable — reprend bien les faits clés avec le bon champion associé (ex: Sylas sur l'avance de lane, Lulu sur vision/dragon) et une vraie logique de contre côté adverse. **Réserve à garder en tête** : Claude enrichit le texte avec de la connaissance générale de LoL au-delà de nos données pures (ex: un rôle attribué à un ADC pas franchement typique) — attendu d'un LLM, mais le plan final mélange signal statistique et connaissances générales, pas 100% traçable à nos données.
 - **Validation des entrées ajoutée** : en testant "comment tester l'assistant", découvert qu'un nom de champion mal orthographié (`"Arhi"` au lieu de `"Ahri"`) était accepté silencieusement — le champion invalide était juste ignoré, sans erreur, ce qui aurait donné un plan subtilement faux sans avertissement. `composition_fact_ranking` vérifie maintenant : exactement 5 champions, et chaque nom reconnu (sinon `ValueError`, avec suggestion du nom le plus proche via `difflib` — ex: "vouliez-vous dire 'Ahri' ?"). Validation à l'entrée du système (saisie utilisateur), pas de la défense excessive ailleurs.
+- **Raccourci de saisie depuis une partie en cours (2026-09-18)** : `lol_assistant/live_game.py` ajoute `get_composition_from_active_game(riot_client, game_name, tag_line)`, qui résout un Riot ID en `puuid`, interroge Spectator-V5 (`RiotClient.get_active_game`, nouveau — routage **plateforme**, ex `euw1`, pas région, comme Match-V5) pour la partie en cours du joueur, et sépare les 10 participants en `your_team`/`enemy_team` via leur `teamId`. Le mapping `championId` numérique → nom de champion vient de Data Dragon (CDN statique Riot, pas de clé API requise), mis en cache dans `data/champion_id_map.json`. **Important** : une fois les 10 noms extraits, le reste de l'état de la partie (kills, or, timers, résultat) est jeté — ce n'est qu'un raccourci de saisie, pas une analyse de partie réelle ; ça ne change rien au contrat produit défini en phase 1 (composition hypothétique en entrée). `get_active_game` renvoie `None` si le joueur n'est pas en partie (cas normal), traduit en `ValueError` explicite par `get_composition_from_active_game`. Démo dans `notebooks/04_llm_game_plan.ipynb`, Concept 5.
 
 **Reste à faire :**
 - Ajouter Ollama/Llama 3.1 8B en option de comparaison gratuite/locale.
@@ -220,18 +221,21 @@ LOL-assistant/
 ├── .env                                # clé API Riot (jamais versionné)
 ├── .env.example                        # gabarit sans secret
 ├── .gitignore                          # exclut .env, .venv/, __pycache__/, .ipynb_checkpoints/, data/, .claude/, *.egg-info/
-├── lol_assistant/                     # package industrialisé (phase 2)
+├── lol_assistant/                     # package industrialisé (phase 2+)
 │   ├── __init__.py
 │   ├── rate_limiter.py                # classe RateLimiter (fenêtre glissante)
-│   ├── riot_client.py                 # classe RiotClient (auth, région, appels Riot)
+│   ├── riot_client.py                 # classe RiotClient (auth, région+plateforme, appels Riot dont Spectator-V5)
 │   ├── database.py                    # get_connection + fonctions CRUD SQLite
-│   └── crawler.py                     # crawl_matches (BFS/snowball sampling, filtre gameMode, durée max)
+│   ├── crawler.py                     # crawl_matches (BFS/snowball sampling, filtre gameMode, durée max)
+│   ├── game_plan.py                   # phase 4 — classement de faits par équipe + prompt + appel Claude
+│   └── live_game.py                   # phase 4 — raccourci de saisie : composition depuis une partie en cours
 ├── scripts/
 │   └── collect_dataset.py             # collecte à grande échelle, en arrière-plan, bornée en durée
 ├── notebooks/
 │   ├── 01_riot_api_basics.ipynb       # phase 1 — terminée, figée (artefact pédagogique)
 │   ├── 02_dataset_collection.ipynb    # phase 2 — importe lol_assistant/, pipeline prêt
-│   └── 03_model_training.ipynb        # phase 3 — extraction + exports Power BI faits, entraînement à venir
+│   ├── 03_model_training.ipynb        # phase 3 — extraction, entraînement, SHAP, sauvegarde du modèle
+│   └── 04_llm_game_plan.ipynb         # phase 4 — classement + prompt + Claude + saisie via partie en cours
 ├── docs/
 │   └── powerbi_guide.md               # guide pas-à-pas d'exploration Power BI
 └── data/
@@ -244,6 +248,7 @@ LOL-assistant/
     ├── missing_values.csv             # % de valeurs manquantes par colonne (jamais versionné)
     ├── champion_summary.csv           # parties/winrate/rôle principal par champion (jamais versionné)
     ├── champion_feature_interactions.csv  # interactions SHAP champion × fait (jamais versionné)
+    ├── champion_id_map.json           # cache Data Dragon championId -> nom (jamais versionné)
     ├── xgb_model.joblib               # modèle XGBoost entraîné + métadonnées (jamais versionné)
     └── global_shap_importance.csv     # importance SHAP globale par fait (jamais versionné)
 ```

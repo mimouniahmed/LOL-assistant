@@ -9,12 +9,13 @@ from .rate_limiter import RateLimiter
 
 
 class RiotClient:
-    def __init__(self, region="europe", max_calls=100, period_seconds=120):
+    def __init__(self, region="europe", platform="euw1", max_calls=100, period_seconds=120):
         load_dotenv()
         api_key = os.environ["RIOT_API_KEY"]
 
         self.headers = {"X-Riot-Token": api_key}
-        self.region = region
+        self.region = region  # routage régional (Account-V1, Match-V5) : "europe", "americas"...
+        self.platform = platform  # routage plateforme (Spectator-V5) : "euw1", "na1"...
         self.limiter = RateLimiter(max_calls=max_calls, period_seconds=period_seconds)
 
     def _get(self, url, params=None, max_retries=3):
@@ -52,5 +53,15 @@ class RiotClient:
     def get_match_timeline(self, match_id):
         url = f"https://{self.region}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline"
         response = self._get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def get_active_game(self, puuid):
+        """Partie en cours d'un joueur (routage plateforme, pas région). Renvoie None si le
+        joueur n'est pas en partie actuellement (404 — un cas normal, pas une erreur)."""
+        url = f"https://{self.platform}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/{puuid}"
+        response = self._get(url)
+        if response.status_code == 404:
+            return None
         response.raise_for_status()
         return response.json()
