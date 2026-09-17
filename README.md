@@ -29,7 +29,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 2. Collecte du dataset (SQLite + snowball sampling) | ✅ Terminée — 12 482 matchs collectés |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
 | 3. Modèle ML (Gradient Boosted Trees + SHAP) | ✅ Terminée — modèle entraîné, SHAP étapes 1-2-3 faites |
-| 4. LLM (plan de jeu textuel) | 🚧 Code prêt (Claude), reste la clé API à renseigner + tester, puis option Ollama |
+| 4. LLM (plan de jeu textuel) | 🚧 Premier plan de jeu généré avec Claude, reste l'option Ollama |
 | 5. Interface | ⏳ À venir |
 
 ## Phase 1 — Bases de l'API Riot ✅ Terminée
@@ -173,10 +173,10 @@ Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`noteboo
 - `build_game_plan_prompt` : construit le prompt à partir des classements des **deux** équipes — la nôtre ("à prioriser") et l'adverse ("à surveiller/contrer", même analyse légitime appliquée à leurs champions, pas un vrai signal de matchup entraîné).
 - `generate_game_plan` : pipeline complet (classement + prompt + appel Claude). Modèle par défaut **Sonnet 5** (tâche de rédaction gabarisée, pas besoin du modèle le plus capable — `claude-opus-5` disponible en passant `model=...`).
 - Dépendance `anthropic` ajoutée (`requirements.txt` et `pyproject.toml`, le package en a besoin directement).
+- **Premier plan de jeu généré avec succès (2026-09-18)**, `ANTHROPIC_API_KEY` renseignée et testée. Résultat cohérent et actionnable — reprend bien les faits clés avec le bon champion associé (ex: Sylas sur l'avance de lane, Lulu sur vision/dragon) et une vraie logique de contre côté adverse. **Réserve à garder en tête** : Claude enrichit le texte avec de la connaissance générale de LoL au-delà de nos données pures (ex: un rôle attribué à un ADC pas franchement typique) — attendu d'un LLM, mais le plan final mélange signal statistique et connaissances générales, pas 100% traçable à nos données.
 
 **Reste à faire :**
-- Renseigner `ANTHROPIC_API_KEY` dans `.env` et valider un premier plan de jeu généré.
-- Ajouter Ollama/Llama 3.1 8B en option de comparaison.
+- Ajouter Ollama/Llama 3.1 8B en option de comparaison gratuite/locale.
 
 ## Phase 5 — Interface (à venir)
 
