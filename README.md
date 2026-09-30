@@ -29,8 +29,8 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | 2. Collecte du dataset (SQLite + snowball sampling) | ✅ Terminée — 12 482 matchs collectés |
 | Chantier — Industrialisation en package Python | ✅ Terminée |
 | 3. Modèle ML (Gradient Boosted Trees + SHAP) | ✅ Terminée — modèle entraîné, SHAP étapes 1-2-3 faites |
-| 4. LLM (plan de jeu textuel) | 🚧 Premier plan de jeu généré avec Claude, reste l'option Ollama |
-| 5. Interface | ⏳ À venir |
+| 4. LLM (plan de jeu textuel) | ✅ Terminée — plan de jeu généré avec Claude |
+| 5. Interface (CLI) | 🚧 En cours — `lol_assistant/cli.py` écrit et testé (hors appel Claude réel, `data/` absent sur cette machine) |
 
 ## Phase 1 — Bases de l'API Riot ✅ Terminée
 
@@ -162,11 +162,11 @@ Pas engagé maintenant : nettement plus de travail que `challenges` (raison init
 
 Idée initiale : `biais global + poids individuel par champion + produit scalaire entre paires d'embeddings` (paires même équipe = synergie, équipes opposées = matchup/contre), embeddings appris de façon supervisée. Abandonnée après avoir identifié un vrai problème mathématique en l'implémentant : un produit scalaire est symétrique (`dot(A,B) = dot(B,A)`), mais quel camp est "bleu" ou "rouge" est arbitraire — un terme de contre symétrique ne peut donc porter **aucun signal prédictif** (il ne change pas de signe quand on inverse les équipes, contrairement au label). Le corriger proprement (embeddings offense/défense séparés, ou matrice bilinéaire antisymétrique apprise) ajoutait une complexité prématurée vu le dataset actuel (~20 matchs, qui overfitterait de toute façon). Combiné à l'envie de raisonner sur le déroulé de partie plutôt que sur les picks seuls, ça a motivé le pivot vers GBT+SHAP.
 
-## Phase 4 — LLM 🚧 En cours
+## Phase 4 — LLM ✅ Terminée
 
 Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`lol_assistant/live_game.py`](lol_assistant/live_game.py), [`notebooks/04_llm_game_plan.ipynb`](notebooks/04_llm_game_plan.ipynb).
 
-**Décision** : Claude en premier (API Anthropic), puis Llama 3.1 8B via Ollama en option de comparaison gratuite/locale (vérifié : cette machine a la RAM pour le 8B quantifié, pas pour le 70B/405B — CPU only, pas de GPU, donc plus lent qu'une API cloud).
+**Décision** : Claude (API Anthropic) pour la génération du plan de jeu.
 
 **Fait :**
 - `composition_fact_ranking` **industrialisée** dans `lol_assistant/game_plan.py` (jusque-là seulement dans le notebook 3) — lit `data/global_shap_importance.csv` + `data/champion_feature_interactions.csv`, aucun appel modèle/SHAP nécessaire à l'usage. Au passage, filtre `champion`/`role` (présents par erreur dans les CSV exportés, pas de vrais faits de jeu — oubli du notebook 3, corrigé ici à l'usage plutôt qu'en ré-import du notebook).
@@ -177,12 +177,23 @@ Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`lol_ass
 - **Validation des entrées ajoutée** : en testant "comment tester l'assistant", découvert qu'un nom de champion mal orthographié (`"Arhi"` au lieu de `"Ahri"`) était accepté silencieusement — le champion invalide était juste ignoré, sans erreur, ce qui aurait donné un plan subtilement faux sans avertissement. `composition_fact_ranking` vérifie maintenant : exactement 5 champions, et chaque nom reconnu (sinon `ValueError`, avec suggestion du nom le plus proche via `difflib` — ex: "vouliez-vous dire 'Ahri' ?"). Validation à l'entrée du système (saisie utilisateur), pas de la défense excessive ailleurs.
 - **Raccourci de saisie depuis une partie en cours (2026-09-18)** : `lol_assistant/live_game.py` ajoute `get_composition_from_active_game(riot_client, game_name, tag_line)`, qui résout un Riot ID en `puuid`, interroge Spectator-V5 (`RiotClient.get_active_game`, nouveau — routage **plateforme**, ex `euw1`, pas région, comme Match-V5) pour la partie en cours du joueur, et sépare les 10 participants en `your_team`/`enemy_team` via leur `teamId`. Le mapping `championId` numérique → nom de champion vient de Data Dragon (CDN statique Riot, pas de clé API requise), mis en cache dans `data/champion_id_map.json`. **Important** : une fois les 10 noms extraits, le reste de l'état de la partie (kills, or, timers, résultat) est jeté — ce n'est qu'un raccourci de saisie, pas une analyse de partie réelle ; ça ne change rien au contrat produit défini en phase 1 (composition hypothétique en entrée). `get_active_game` renvoie `None` si le joueur n'est pas en partie (cas normal), traduit en `ValueError` explicite par `get_composition_from_active_game`. Démo dans `notebooks/04_llm_game_plan.ipynb`, Concept 5.
 
-**Reste à faire :**
-- Ajouter Ollama/Llama 3.1 8B en option de comparaison gratuite/locale.
+**Reste à faire (phase 4) :**
 
-## Phase 5 — Interface (à venir)
+Rien — phase 4 terminée. La suite est la phase 5 (interface).
 
-Assembler le tout dans une interface utilisable (CLI ou notebook consolidé) — pas encore tranché.
+## Phase 5 — Interface 🚧 En cours
+
+Fichier : [`lol_assistant/cli.py`](lol_assistant/cli.py).
+
+**Décision** : une **CLI** (ligne de commande) plutôt qu'un notebook consolidé — utilisable sans Jupyter, cohérente avec le reste du package. N'assemble que des briques déjà industrialisées (`game_plan.py`, `live_game.py`, `riot_client.py`), aucune nouvelle logique métier.
+
+**Fait :**
+- `main()` : propose deux modes — saisie manuelle des deux compositions (5 champions séparés par des virgules par équipe), ou récupération automatique depuis la partie en cours d'un joueur via un Riot ID (`pseudo#tag`, réutilise `get_composition_from_active_game` de la phase 4).
+- Boucle de nouvelle tentative sur `ValueError` (composition invalide : mauvais nombre de champions, nom mal orthographié) — l'utilisateur peut corriger sa saisie sans relancer le programme.
+- Erreurs réseau/API rattrapées avec un message clair plutôt qu'un traceback brut : `requests.exceptions.RequestException` (API Riot, ex. clé dev expirée — cas réel rencontré en testant sur une machine avec une clé de plus de 24h), `anthropic.AnthropicError` (API Claude), `FileNotFoundError` (artefacts `data/` absents — cas réel sur une machine sans la collecte locale, voir section suivante).
+- Point d'entrée `lol_assistant/__main__.py` (`python -m lol_assistant`) et script `lol-assistant` déclaré dans `pyproject.toml` (`[project.scripts]`, actif après `pip install -e .`).
+
+**Reste à faire :** rien d'identifié pour l'instant — à valider par un usage réel une fois `data/` disponible sur une machine avec collecte + modèle entraînés.
 
 ## Dépôt Git / GitHub
 
@@ -228,7 +239,9 @@ LOL-assistant/
 │   ├── database.py                    # get_connection + fonctions CRUD SQLite
 │   ├── crawler.py                     # crawl_matches (BFS/snowball sampling, filtre gameMode, durée max)
 │   ├── game_plan.py                   # phase 4 — classement de faits par équipe + prompt + appel Claude
-│   └── live_game.py                   # phase 4 — raccourci de saisie : composition depuis une partie en cours
+│   ├── live_game.py                   # phase 4 — raccourci de saisie : composition depuis une partie en cours
+│   ├── cli.py                         # phase 5 — interface ligne de commande (main())
+│   └── __main__.py                    # permet `python -m lol_assistant`
 ├── scripts/
 │   └── collect_dataset.py             # collecte à grande échelle, en arrière-plan, bornée en durée
 ├── notebooks/

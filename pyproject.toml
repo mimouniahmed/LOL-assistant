@@ -13,5 +13,8 @@ dependencies = [
     "anthropic",
 ]
 
+[project.scripts]
+lol-assistant = "lol_assistant.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["lol_assistant*"]
