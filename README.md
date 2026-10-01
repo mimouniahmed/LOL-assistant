@@ -21,7 +21,7 @@ Projet éducatif : construire, étape par étape, un assistant qui aide un joueu
 Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Gradient Boosted Trees + SHAP (ML) → LLM (Claude API) → interface
 ```
 
-## Statut global (2026-09-16)
+## Statut global (2026-10-01)
 
 | Phase | Statut |
 |---|---|
@@ -30,7 +30,7 @@ Riot API (ingestion) → SQLite (stockage brut) → pandas (extraction) → Grad
 | Chantier — Industrialisation en package Python | ✅ Terminée |
 | 3. Modèle ML (Gradient Boosted Trees + SHAP) | ✅ Terminée — modèle entraîné, SHAP étapes 1-2-3 faites |
 | 4. LLM (plan de jeu textuel) | ✅ Terminée — plan de jeu généré avec Claude |
-| 5. Interface (CLI) | 🚧 En cours — `lol_assistant/cli.py` écrit et testé (hors appel Claude réel, `data/` absent sur cette machine) |
+| 5. Interface (CLI) | ✅ Terminée — validée en conditions réelles (`data/` + appel Claude) |
 
 ## Phase 1 — Bases de l'API Riot ✅ Terminée
 
@@ -181,7 +181,7 @@ Fichiers : [`lol_assistant/game_plan.py`](lol_assistant/game_plan.py), [`lol_ass
 
 Rien — phase 4 terminée. La suite est la phase 5 (interface).
 
-## Phase 5 — Interface 🚧 En cours
+## Phase 5 — Interface ✅ Terminée
 
 Fichier : [`lol_assistant/cli.py`](lol_assistant/cli.py).
 
@@ -193,7 +193,13 @@ Fichier : [`lol_assistant/cli.py`](lol_assistant/cli.py).
 - Erreurs réseau/API rattrapées avec un message clair plutôt qu'un traceback brut : `requests.exceptions.RequestException` (API Riot, ex. clé dev expirée — cas réel rencontré en testant sur une machine avec une clé de plus de 24h), `anthropic.AnthropicError` (API Claude), `FileNotFoundError` (artefacts `data/` absents — cas réel sur une machine sans la collecte locale, voir section suivante).
 - Point d'entrée `lol_assistant/__main__.py` (`python -m lol_assistant`) et script `lol-assistant` déclaré dans `pyproject.toml` (`[project.scripts]`, actif après `pip install -e .`).
 
-**Reste à faire :** rien d'identifié pour l'instant — à valider par un usage réel une fois `data/` disponible sur une machine avec collecte + modèle entraînés.
+**Validé en conditions réelles (2026-10-01)**, `data/` disponible sur cette machine :
+- Mode 1 (saisie manuelle) : plan de jeu généré de bout en bout avec un vrai appel Claude — cohérent, mentionne les bons champions clés.
+- Retry sur `ValueError` : une faute de frappe (`"Arhi"`) affiche le message avec suggestion, `n` à "Réessayer ?" quitte proprement, sans traceback.
+- Chemin d'erreur réseau : testé en conditions réelles d'une clé Riot expirée (cas survenu pendant ce test) — message clair affiché (`Erreur d'appel à l'API Riot...`) au lieu d'un traceback brut, confirmant que la gestion d'erreur fonctionne.
+- Mode 2 (partie en cours) **non re-testé via la CLI elle-même** à cause de cette clé expirée au moment du test — mais `get_composition_from_active_game`, la fonction qu'il appelle, a déjà été validée en conditions réelles (vraie partie en cours, vraie séparation des deux équipes) lors de son développement en phase 4. Risque résiduel jugé faible : la CLI ne fait qu'appeler cette fonction et afficher le résultat ou l'erreur.
+
+**Reste à faire :** rien d'identifié.
 
 ## Dépôt Git / GitHub
 
